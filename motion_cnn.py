@@ -1,13 +1,18 @@
 import argparse
-
+import torch
+from torch.autograd import Variable
+import torch.nn as nn
 import cv2
-import dataloader
-import tqdm
-from dataloader import UCF101_splitter
+from dataloader import *
+from dataloader.spatial_dataloader import *
+from dataloader.split_train_test_video import UCF101_splitter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-
-from models.network import *
+import time
+from tqdm import tqdm
+from models.network import resnet101
+from utils.opt_flow import opt_flow_infer
 from utils.utils import *
+import numpy as np
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -24,7 +29,7 @@ parser.add_argument('--demo', dest='demo', action='store_true', help='use model 
 def main():
     global arg
     arg = parser.parse_args()
-    print arg
+    print(arg)
 
     # Prepare DataLoader
     data_loader = dataloader.Motion_DataLoader(
@@ -100,7 +105,7 @@ class Motion_CNN():
             # read each frame and prepare it for feedforward in nn (resize and type)
             ret, orig_frame = vs.read()
             if ret is False:
-                print "Camera disconnected or not recognized by computer"
+                print ("Camera disconnected or not recognized by computer")
                 break
 
             frame = cv2.cvtColor(orig_frame, cv2.COLOR_BGR2RGB)
@@ -123,7 +128,7 @@ class Motion_CNN():
             # Display the resulting frame and the classified action
             font = cv2.FONT_HERSHEY_SIMPLEX
             y0, dy = 300, 40
-            for i in xrange(5):
+            for i in range(5):
                 y = y0 + i * dy
                 cv2.putText(orig_frame, '{} - {:.2f}'.format(pred_classes[i][0], pred_classes[i][1]),
                             (5, y), font, 1, (0, 0, 255), 2)
@@ -138,7 +143,7 @@ class Motion_CNN():
         cv2.destroyAllWindows()
 
     def build_model(self):
-        print '==> Build model and setup loss and optimizer'
+        print ('==> Build model and setup loss and optimizer')
         self.model = resnet101(pretrained=True, channel=self.channel).cuda()
         self.criterion = nn.CrossEntropyLoss().cuda()
         self.optimizer = torch.optim.SGD(self.model.parameters(), self.lr, momentum=0.9)
@@ -147,16 +152,16 @@ class Motion_CNN():
     def resume_and_evaluate(self):
         if self.resume:
             if os.path.isfile(self.resume):
-                print "==> loading checkpoint '{}'".format(self.resume)
+                print ("==> loading checkpoint '{}'".format(self.resume))
                 checkpoint = torch.load(self.resume)
                 self.start_epoch = checkpoint['epoch']
                 self.best_prec1 = checkpoint['best_prec1']
                 self.model.load_state_dict(checkpoint['state_dict'])
                 self.optimizer.load_state_dict(checkpoint['optimizer'])
-                print "==> loaded checkpoint '{}' (epoch {}) (best_prec1 {})".format(self.resume, checkpoint['epoch'],
-                                                                                     self.best_prec1)
+                print ("==> loaded checkpoint '{}' (epoch {}) (best_prec1 {})".format(self.resume, checkpoint['epoch'],
+                                                                                     self.best_prec1))
             else:
-                print "==> no checkpoint found at '{}'".format(self.resume)
+                print ("==> no checkpoint found at '{}'".format(self.resume))
         if self.evaluate:
             self.epoch = 0
             prec1, val_loss = self.validate_1epoch()
@@ -169,7 +174,7 @@ class Motion_CNN():
     def run(self):
         self.build_model()
         self.resume_and_evaluate()
-        cudnn.benchmark = True
+        # cudnn.benchmark = True
 
         if self.evaluate or self.demo:
             return
@@ -195,7 +200,7 @@ class Motion_CNN():
             }, is_best, 'record/motion/checkpoint.pth.tar', 'record/motion/model_best.pth.tar')
 
     def train_1epoch(self):
-        print '==> Epoch:[{0}/{1}][training stage]'.format(self.epoch, self.nb_epochs)
+        print('==> Epoch:[{0}/{1}][training stage]'.format(self.epoch, self.nb_epochs))
 
         batch_time = AverageMeter()
         data_time = AverageMeter()
@@ -211,7 +216,7 @@ class Motion_CNN():
             # measure data loading time
             data_time.update(time.time() - end)
 
-            label = label.cuda(async=True)
+            label = label.cuda(non_blocking=True)
             input_var = Variable(data).cuda()
             target_var = Variable(label).cuda()
 
@@ -245,7 +250,7 @@ class Motion_CNN():
         record_info(info, 'record/motion/opf_train.csv', 'train')
 
     def validate_1epoch(self):
-        print '==> Epoch:[{0}/{1}][validation stage]'.format(self.epoch, self.nb_epochs)
+        print('==> Epoch:[{0}/{1}][validation stage]'.format(self.epoch, self.nb_epochs))
 
         batch_time = AverageMeter()
         losses = AverageMeter()
@@ -259,9 +264,9 @@ class Motion_CNN():
         for i, (keys, data, label) in enumerate(progress):
 
             # data = data.sub_(127.353346189).div_(14.971742063)
-            label = label.cuda(async=True)
-            data_var = Variable(data, volatile=True).cuda(async=True)
-            label_var = Variable(label, volatile=True).cuda(async=True)
+            label = label.cuda(non_blocking=True)
+            data_var = Variable(data, volatile=True).cuda(non_blocking=True)
+            label_var = Variable(label, volatile=True).cuda(non_blocking=True)
 
             # compute output
             output = self.model(data_var)

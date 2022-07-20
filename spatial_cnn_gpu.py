@@ -1,13 +1,18 @@
 import argparse
-
+import torch
+from torch.autograd import Variable
+import torch.nn as nn
 import cv2
-import dataloader
-from dataloader import UCF101_splitter
+from dataloader import *
+from dataloader.spatial_dataloader import *
+from dataloader.split_train_test_video import UCF101_splitter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-
+import time
+from tqdm import tqdm
 from models.network import resnet101
 from utils.opt_flow import opt_flow_infer
 from utils.utils import *
+import numpy as np
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -24,14 +29,14 @@ parser.add_argument('--demo', dest='demo', action='store_true', help='use model 
 def main():
     global arg
     arg = parser.parse_args()
-    print arg
+    print(arg)
 
     if not arg.demo:
         # Prepare DataLoader
-        data_loader = dataloader.spatial_dataloader(
+        data_loader = spatial_dataloader(
             BATCH_SIZE=arg.batch_size,
             num_workers=8,
-            path='/hdd/UCF-101/Data/jpegs_256/',
+            path='/home/niloofar/ActionRecognitionProject/Data/jpegs_256/',
             ucf_list=os.getcwd() + '/UCF_data_references/',
             ucf_split='01',
         )
@@ -107,7 +112,7 @@ class Spatial_CNN():
             ret, orig_frame = vs.read()
 
             if ret is False:
-                print "Camera disconnected or not recognized by computer"
+                print("Camera disconnected or not recognized by computer")
                 break
 
             if frame_count == 0:
@@ -137,7 +142,7 @@ class Spatial_CNN():
             # Display the resulting frame and the classified action
             font = cv2.FONT_HERSHEY_SIMPLEX
             y0, dy = 300, 40
-            for i in xrange(5):
+            for i in range(5):
                 y = y0 + i * dy
                 cv2.putText(orig_frame, '{} - {:.2f}'.format(pred_classes[i][0], pred_classes[i][1]),
                             (5, y), font, 1, (0, 0, 255), 2)
@@ -185,7 +190,7 @@ class Spatial_CNN():
     def run(self):
         self.build_model()
         self.resume_and_evaluate()
-        cudnn.benchmark = True
+        # cudnn.benchmark = True
 
         if self.evaluate or self.demo:
             return
@@ -227,7 +232,7 @@ class Spatial_CNN():
             # measure data loading time
             data_time.update(time.time() - end)
 
-            label = label.cuda(async=True)
+            label = label.cuda(non_blocking=True)
             target_var = Variable(label).cuda()
 
             # compute output
@@ -242,9 +247,13 @@ class Spatial_CNN():
 
             # measure accuracy and record loss
             prec1, prec5 = accuracy(output.data, label, topk=(1, 5))
-            losses.update(loss.data[0], data.size(0))
-            top1.update(prec1[0], data.size(0))
-            top5.update(prec5[0], data.size(0))
+            losses.update(loss.data, data.size(0))
+            top1.update(prec1, data.size(0))
+            top5.update(prec5, data.size(0))
+
+            # losses.update(loss.data[0], data.size(0))
+            # top1.update(prec1[0], data.size(0))
+            # top5.update(prec5[0], data.size(0))
 
             # compute gradient and do SGD step
             self.optimizer.zero_grad()
@@ -258,9 +267,9 @@ class Spatial_CNN():
         info = {'Epoch': [self.epoch],
                 'Batch Time': [round(batch_time.avg, 3)],
                 'Data Time': [round(data_time.avg, 3)],
-                'Loss': [round(losses.avg, 5)],
-                'Prec@1': [round(top1.avg, 4)],
-                'Prec@5': [round(top5.avg, 4)],
+                'Loss': [round(float(losses.avg), 5)],
+                'Prec@1': [round(float(top1.avg), 4)],
+                'Prec@5': [round(float(top5.avg), 4)],
                 'lr': self.optimizer.param_groups[0]['lr']
                 }
         record_info(info, 'record/spatial/rgb_train.csv', 'train')
@@ -276,34 +285,36 @@ class Spatial_CNN():
         self.dic_video_level_preds = {}
         end = time.time()
         progress = tqdm(self.test_loader)
-        for i, (keys, data, label) in enumerate(progress):
 
-            label = label.cuda(async=True)
-            data_var = Variable(data, volatile=True).cuda(async=True)
-            label_var = Variable(label, volatile=True).cuda(async=True)
+        with torch.no_grad():    
+            for i, (keys, data, label) in enumerate(progress):
 
-            # compute output
-            output = self.model(data_var)
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-            # Calculate video level prediction
-            preds = output.data.cpu().numpy()
-            nb_data = preds.shape[0]
-            for j in range(nb_data):
-                videoName = keys[j].split('/', 1)[0]
-                if videoName not in self.dic_video_level_preds.keys():
-                    self.dic_video_level_preds[videoName] = preds[j, :]
-                else:
-                    self.dic_video_level_preds[videoName] += preds[j, :]
+                label = label.cuda(non_blocking=True)
+                data_var = Variable(data).cuda(non_blocking=True)
+                label_var = Variable(label).cuda(non_blocking=True)
+
+                # compute output
+                output = self.model(data_var)
+                # measure elapsed time
+                batch_time.update(time.time() - end)
+                end = time.time()
+                # Calculate video level prediction
+                preds = output.data.cpu().numpy()
+                nb_data = preds.shape[0]
+                for j in range(nb_data):
+                    videoName = keys[j].split('/', 1)[0]
+                    if videoName not in self.dic_video_level_preds.keys():
+                        self.dic_video_level_preds[videoName] = preds[j, :]
+                    else:
+                        self.dic_video_level_preds[videoName] += preds[j, :]
 
         video_top1, video_top5, video_loss = self.frame2_video_level_accuracy()
 
         info = {'Epoch': [self.epoch],
                 'Batch Time': [round(batch_time.avg, 3)],
-                'Loss': [round(video_loss, 5)],
-                'Prec@1': [round(video_top1, 3)],
-                'Prec@5': [round(video_top5, 3)]}
+                'Loss': [round(float(video_loss), 5)],
+                'Prec@1': [round(float(video_top1), 3)],
+                'Prec@5': [round(float(video_top5), 3)]}
         record_info(info, 'record/spatial/rgb_test.csv', 'test')
         return video_top1, video_loss
 

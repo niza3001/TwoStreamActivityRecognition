@@ -1,5 +1,5 @@
 import dataloader
-
+import numpy as np
 from utils.utils import *
 
 if __name__ == '__main__':
@@ -41,4 +41,4 @@ if __name__ == '__main__':
 
     top1, top5 = accuracy(video_level_preds, video_level_labels, topk=(1, 5))
 
-    print top1, top5
+    print (top1, top5)

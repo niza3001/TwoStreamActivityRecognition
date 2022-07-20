@@ -17,7 +17,7 @@ def accuracy(output, target, topk=(1,)):
 
     res = []
     for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
+        correct_k = correct[:k].contiguous().view(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
 
@@ -58,7 +58,7 @@ def record_info(info, filename, mode):
             'LR {lr}\n'.format(batch_time=info['Batch Time'],
                                data_time=info['Data Time'], loss=info['Loss'], top1=info['Prec@1'], top5=info['Prec@5'],
                                lr=info['lr']))
-        print result
+        print (result)
 
         df = pd.DataFrame.from_dict(info)
         column_names = ['Epoch', 'Batch Time', 'Data Time', 'Loss', 'Prec@1', 'Prec@5', 'lr']
@@ -70,7 +70,7 @@ def record_info(info, filename, mode):
             'Prec@1 {top1} '
             'Prec@5 {top5} \n'.format(batch_time=info['Batch Time'],
                                       loss=info['Loss'], top1=info['Prec@1'], top5=info['Prec@5']))
-        print result
+        print (result)
         df = pd.DataFrame.from_dict(info)
         column_names = ['Epoch', 'Batch Time', 'Loss', 'Prec@1', 'Prec@5']
 
